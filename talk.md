@@ -8,17 +8,23 @@ subtitle: Come together over FFI
 
 ## Use-cases
 
+::: columns
+::::: column
 ### Haskell
 
 - web gateway
 - window manager
 - code and natural language parsing
+:::::
 
+::::: column
 ### Lua
 
 - web gateway
 - window manager
 - extending programs
+:::::
+:::
 
 ::: notes
 #### Haskell examples
@@ -56,6 +62,21 @@ hammerspoon
 :   making OS X scriptable
 :::
 
+## Use-cases
+
+::: columns
+::::: column
+### Haskell
+
+Complex systems
+:::::
+
+::::: column
+### Lua
+
+Extensible systems
+:::::
+:::
 ## Language overview
 
 |            | Haskell  | Lua         |
@@ -289,6 +310,11 @@ main = do
       equality:                  OK
 ```
 
+::: notes
+Tasty is a popular Haskell testing framework. Lua tests can be
+integrated into a Tasty test-suite.
+:::
+
 
 ## 🧑‍💼🏢🧑‍💻
 
@@ -298,3 +324,13 @@ RStudio
 RStudio is a large, successful software company. They are rebuilding a popular
 product, R Markdown, and base it on pandoc's Lua interface.
 :::
+
+
+# Thanks
+
+## Summary
+
+- Haskell and Lua are both excellent languages
+- Together they are even stronger
+- Integrating Lua into Haskell apps is easy
+- HsLua is a ready-to-use framework
