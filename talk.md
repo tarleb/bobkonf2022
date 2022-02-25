@@ -203,7 +203,7 @@ freeStablePtr xptr
 
 
 
-## Safety 
+## Safety
 
 - Callbacks into Haskell are allowed.
 - Requires some runtime investment.
@@ -222,18 +222,72 @@ https://github.com/dyu/ffi-overhead
 
 # C Types
 
-
 ## Free stable pointer
 
 ## `setjmp` & `longjmp`
 
 # In action
 
-## deftype
+## Types
 
-## pushhaskellfunction
+``` haskell
+typeRational = deftype "Rational"
+  [ operation Tostring $ lambda
+      ### liftPure show
+      <#> parameter (peekUD typeRational) "rational" "r"
+      =#> functionResult pushString "string" "string representation"
+  ]
+  [ property "numerator" "numerator of the ratio in reduced form"
+      (pushIntegral, numerator)
+      (peekIntegral, \r n -> n % denominator r)
+  ]
+```
 
-## pushDocumentedFunction
+## Functions
+
+``` haskell
+registerRational = do
+  pushDocumentedFunction $
+   defun "Rational"
+      ### liftPure2 (%)
+      <*> parameter peekIntegral "integer" "numerator"
+      <*> parameter peekIntegral "integer" "denominator"
+      =#> functionResult (pushUD typeRational)
+  setglobal "Rational"
+```
+
+## Tests
+
+``` lua
+return {
+  group 'examples'  {
+    test('multiplication', function()
+      assert.are_equal(6, 2 * 3)
+    end),
+    test('empty var is nil', function ()
+      assert.is_nil(var)
+    end)
+  }
+}
+```
+
+## Tasty integration
+``` haskell
+main = do
+  luaTest <- withCurrentDirectory "test" . run $ do
+    translateResultsFromFile "example-tests.lua"
+  defaultMain . testGroup "Haskell and Lua tests" $
+    [ luaTest {- more tasty tests go here -} ]
+```
+
+```
+  test/example-tests.lua
+    constructor
+      has type `userdata`:       OK
+      accepts list of integers:  OK
+    comparison
+      equality:                  OK
+```
 
 
 ## 🧑‍💼🏢🧑‍💻
@@ -244,4 +298,3 @@ RStudio
 RStudio is a large, successful software company. They are rebuilding a popular
 product, R Markdown, and base it on pandoc's Lua interface.
 :::
-
