@@ -6,6 +6,18 @@ subtitle: Come together over FFI
 
 # What's this about?
 
+## whoami
+
+- HsLua
+- Pandoc contrib
+- Scientific publishing
+
+::: notes
+- HsLua was created by Gracjan Polak in 2007; I took it over from Ömer
+  Sinan Ağacan in 2016.
+- In my 8th year of contributing to pandoc.
+- On a quest to improve scientific writing and publishing.
+
 ## Use-cases
 
 ::: columns
