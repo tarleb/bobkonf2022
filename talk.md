@@ -18,6 +18,26 @@ subtitle: Come together over FFI
 - In my 8th year of contributing to pandoc.
 - On a quest to improve scientific writing and publishing.
 
+## Language overview
+
+::: columns
+::::: column
+### Haskell
+
+- lazy evaluation
+- static typing
+- compiled
+:::::
+
+::::: column
+### Lua
+
+- strict evaluation
+- dynamic typing
+- interpreted
+:::::
+:::
+
 ## Use-cases
 
 ::: columns
@@ -25,16 +45,25 @@ subtitle: Come together over FFI
 ### Haskell
 
 - web gateway
+
+  (PostgREST, Hasura)
+
 - window manager
-- code and natural language parsing
+
+  (XMonad)
+
 :::::
 
 ::::: column
 ### Lua
 
 - web gateway
+
+  (Kong)
+
 - window manager
-- extending programs
+
+  (Awesome)
 :::::
 :::
 
@@ -50,15 +79,6 @@ Hasura GraphQL engine
 XMonad
 :   Haskell window manager
 
-ShellCheck
-:   Static analyzer / linter for Shell scripts
-
-Semantic
-:   Code analyzer
-
-Pandoc
-:   Universal document converter
-
 #### Lua examples
 
 Kong
@@ -66,12 +86,6 @@ Kong
 
 Awesome
 :   Lua window manager
-
-neovim
-:   Lua-focused rewrite of vim
-
-hammerspoon
-:   making OS X scriptable
 :::
 
 ## Use-cases
@@ -86,9 +100,32 @@ Complex systems
 ::::: column
 ### Lua
 
-Extensible systems
+Scriptable systems
 :::::
 :::
+
+::: notes
+"Scriptable" here means that a program can be extended through short
+Lua scripts.
+
+### Haskell
+ShellCheck
+:   Static analyzer / linter for Shell scripts
+
+Semantic
+:   Code analyzer
+
+Pandoc
+:   Universal document converter
+
+### Lua
+neovim
+:   Lua-focused rewrite of vim
+
+hammerspoon
+:   making OS X scriptable
+:::
+
 ## Language overview
 
 |            | Haskell  | Lua         |
@@ -98,6 +135,16 @@ Extensible systems
 | programs   | compiled | interpreted |
 | GC         | ✓        | ✓           |
 | C API      | ✓        | ✓           |
+
+::: notes
+GC
+:   bit of a problem, because we must be careful that the GCs don't get
+    in each others way.
+
+C API
+:   Both have excellent C interoperability; we can use that to make them
+    work together.
+:::
 
 # FFI
 
@@ -109,11 +156,10 @@ Extensible systems
 
 ## Function imports
 
+C header
 ``` c
 void (lua_pushboolean) (lua_State *L, int b);
 ```
-
-
 
 Import
 ``` haskell
@@ -121,17 +167,26 @@ foreign import capi "lua.h lua_pushboolean"
   lua_pushboolean :: Ptr () -> CInt -> IO ()
 ```
 
-## Simple types in C
+::: notes
+
+Importing is straight-forward; the C function becomes usable as a
+Haskell function.
+
+:::
+
+## Types
+
+Simple in C
 
 ``` c
 int (lua_setiuservalue) (lua_State *L, int idx, int n);
 ```
 
-## Expressive types in Haskell
+Expressive in Haskell
 
 ``` haskell
-newtype LuaBool    = LuaBool CInt    deriving Storable
-newtype StackIndex = StackIndex CInt deriving Storable
+newtype LuaBool    = LuaBool CInt    deriving (Storable)
+newtype StackIndex = StackIndex CInt deriving (Storable, Num)
 
 foreign import capi "lua.h lua_setiuservalue"
   lua_setiuservalue :: Lua.State -> StackIndex -> CInt
@@ -152,7 +207,12 @@ getAge l = do
   pure result
 ```
 
-## Haskell feeling
+::: notes
+The `lua` package provides bindings to all basic Lua functions.
+Writing C in Haskell is possible, but not pretty.
+:::
+
+## hslua: Familiar Haskell feeling
 
 ``` haskell
 -- | Get name field from registry table.
@@ -164,13 +224,26 @@ getAge = do
 
 ## Reader monad
 
+Lua state as first argument
+``` haskell
+lua_getfield :: State -> ...
+lua_pushboolean :: State -> ...
+```
+
 ``` haskell
 newtype Lua a = Lua { unLua :: ReaderT State IO a }
   deriving (Monad, MonadIO, MonadReader State)
+
+main = run $ do
+  age <- getAge
+  ...
 ```
 
-## package: hslua-core
-
+::: notes
+Lua's C API functions typically take the Lua state as the first
+argument. This is the pattern of the Reader monad, which can be used to
+'hide' the Lua state so it doesn't have to be dragged along manually.
+:::
 
 
 # Data exchange
@@ -187,23 +260,24 @@ newtype Lua a = Lua { unLua :: ReaderT State IO a }
 | "banana" |
 ```
 
+::: notes
+The C API makes it easy to deal with simple values like numbers,
+booleans, and strings. However, how would be put a Haskell value on the
+stack?
+:::
+
 ## Userdata
 
 - Wrapper for arbitrary data.
 - Behavior in Lua can be mended freely.
 - Frequently used with pointers.
+- But pointers don't work well with GC.
 
 ```
 ,---------.
 |  ??? ---|----> data
 `---------'
 ```
-
-## Pointers
-
-- memory address
-- In Haskell: `Foreign.Ptr`
-- GC may relocate objects
 
 ::: notes
 - Garbage collection makes pointers difficult, because objects will
@@ -229,35 +303,21 @@ freeStablePtr xptr
 | StablePtr -|----> Haskell value
 `------------'
 ```
+``` haskell
+  xPtr <- newStablePtr x
+  udPtr <- lua_newuserdata l (fromIntegral $ sizeOf xPtr)
+  poke (castPtr udPtr) xPtr
+  -- ??? freeStablePtr ???
+```
 
 ## Define behavior in Haskell
 
-
-
-
-
-## Safety
-
-- Callbacks into Haskell are allowed.
-- Requires some runtime investment.
-- Can be avoided by using `unsafe`.
-
-``` haskell
--- Improves performance by a third
---                  vvvvvv
-foreign import capi unsafe "lua.h lua_pushnumber"
-  lua_pushnumber :: Lua.State -> Lua.Number -> IO ()
+``` c
+  HsStablePtr *userdata = lua_touserdata(L, 1);
+  if (userdata) {
+    hs_free_stable_ptr(*userdata);
+  }
 ```
-
-## Speed
-https://github.com/dyu/ffi-overhead
-
-
-# C Types
-
-## Free stable pointer
-
-## `setjmp` & `longjmp`
 
 # In action
 
@@ -346,3 +406,29 @@ product, R Markdown, and base it on pandoc's Lua interface.
 - Together they are even stronger
 - Integrating Lua into Haskell apps is easy
 - HsLua is a ready-to-use framework
+
+
+# Appendix
+
+## Safety
+
+- Callbacks into Haskell are allowed.
+- Requires some runtime investment.
+- Can be avoided by using `unsafe`.
+
+``` haskell
+-- Improves performance by a third
+--                  vvvvvv
+foreign import capi unsafe "lua.h lua_pushnumber"
+  lua_pushnumber :: Lua.State -> Lua.Number -> IO ()
+```
+
+## Speed
+https://github.com/dyu/ffi-overhead
+
+
+# C Types
+
+## Free stable pointer
+
+## `setjmp` & `longjmp`
