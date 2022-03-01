@@ -126,17 +126,74 @@ hammerspoon
 :   making OS X scriptable
 :::
 
-## Language overview
+## Example: pandoc
 
-|            | Haskell  | Lua         |
-|------------+----------+-------------|
-| evaluation | lazy     | strict      |
-| typing     | static   | dynamic     |
-| programs   | compiled | interpreted |
-| GC         | ✓        | ✓           |
-| C API      | ✓        | ✓           |
+```haskell
+data Inline
+  = Str Text           -- ^ Text (string)
+  | Emph [Inline]      -- ^ Emphasized text
+  | SmallCaps [Inline] -- ^ Small caps text
+  -- ⋮
+```
+
+| Markdown    | Pandoc AST                  |
+|:-----------:|:----------------------------|
+|  `*Hello*`  | `Emph [Str "Hello"]`        |
+|  `_Hello_`  | `Emph [Str "Hello"]`        |
+| `_*Hello*_` | `Emph [Emph [Str "Hello"]]` |
+|      ?      | `SmallCaps [Str "Hello"]]`  |
 
 ::: notes
+
+Pandoc is a universal document converter, parses documents into an
+internal AST.
+
+Markdown allows to write emphasized text either as `_hello_` or
+`*hello*`, so using both gives nested Emph.
+
+:::
+
+## Pandoc Lua filter
+
+``` lua
+function Emph (em)
+  local nested = #em.content == 1 and em.content[1]
+  if nested and nested.t == 'Emph' then
+    return pandoc.SmallCaps(nested.content)
+  end
+end
+```
+
+In action
+
+```
+ % pandoc --to=latex <<< '_*Hello*_'
+=> \emph{\emph{Hello}}
+
+ % pandoc --lua-filter=smallcaps.lua --to=latex <<< '_*Hello*_'
+=> \textsc{Hello}
+```
+
+## Language overview
+
+|          | Haskell  | Lua         |
+|----------|----------|-------------|
+| typing   | static   | dynamic     |
+| programs | compiled | interpreted |
+| FP       | ✓        | ✓           |
+| GC       | ✓        | ✓           |
+| C API    | ✓        | ✓           |
+
+::: notes
+
+The languages are different in many key aspects, but they share some
+common properties.
+
+FP
+:   Haskell is a pure functional programming language, while Lua is
+    imperative with good functional programming support (functions are
+    first-class citizens).
+
 GC
 :   bit of a problem, because we must be careful that the GCs don't get
     in each others way.
@@ -152,7 +209,7 @@ C API
 
 - Use programs written in a different language
 - Must support the relevant types
-- Bridges the runtime
+- Builds bridges from the runtime system.
 
 ## Function imports
 
@@ -193,12 +250,18 @@ foreign import capi "lua.h lua_setiuservalue"
                     -> IO LuaBool
 ```
 
+::: notes
+Types in C are nice and simple, while types in Haskell are expressive
+and fine-grained. Conversions work well, types must just be instances of
+`Storable`.
+:::
+
 ## package: lua
 
 Basic bindings to Lua
 
 ``` haskell
-getAge :: Lua.State -> IO Integer
+getAge :: Lua.State -> IO Lua.Integer
 getAge l = do
   withCString "age" $
     lua_getfield l LUA_REGISTRYINDEX
@@ -222,11 +285,16 @@ getAge = do
   tointeger top <* pop 1
 ```
 
+::: notes
+Nicer types, dedicated `Lua` monad.
+:::
+
 ## Reader monad
 
 Lua state as first argument
+
 ``` haskell
-lua_getfield :: State -> ...
+lua_getfield    :: State -> ...
 lua_pushboolean :: State -> ...
 ```
 
@@ -243,6 +311,8 @@ main = run $ do
 Lua's C API functions typically take the Lua state as the first
 argument. This is the pattern of the Reader monad, which can be used to
 'hide' the Lua state so it doesn't have to be dragged along manually.
+
+The `run` function just opens and closes a Lua state.
 :::
 
 
