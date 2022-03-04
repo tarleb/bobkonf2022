@@ -12,6 +12,7 @@ talk.html: $(TALK_FILE) reveal.js \
 		--to=revealjs \
 		--slide-level=2 \
 		--variable=theme:serif \
+		--variable=revealjs-url:reveal.js \
 		--lua-filter=filters/title.lua \
 		--output=$@ \
 		$<
