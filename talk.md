@@ -8,15 +8,19 @@ subtitle: Come together over FFI
 
 ## whoami
 
-- HsLua
-- Pandoc contrib
 - Scientific publishing
+- Pandoc contrib
+- HsLua
 
 ::: notes
-- HsLua was created by Gracjan Polak in 2007; I took it over from Ömer
-  Sinan Ağacan in 2016.
 - In my 8th year of contributing to pandoc.
 - On a quest to improve scientific writing and publishing.
+- HsLua was created by Gracjan Polak in 2007; I took it over from Ömer
+  Sinan Ağacan in 2016.
+
+- When I took it over: 680 loc
+- Now: ~3600 loc
+:::
 
 ## Language overview
 
@@ -136,12 +140,16 @@ data Inline
   -- ⋮
 ```
 
+::: {style="font-size:0.75em;"}
+
 | Markdown    | Pandoc AST                  |
 |:-----------:|:----------------------------|
 |  `*Hello*`  | `Emph [Str "Hello"]`        |
 |  `_Hello_`  | `Emph [Str "Hello"]`        |
 | `_*Hello*_` | `Emph [Emph [Str "Hello"]]` |
 |      ?      | `SmallCaps [Str "Hello"]]`  |
+
+:::
 
 ::: notes
 
@@ -157,7 +165,7 @@ Markdown allows to write emphasized text either as `_hello_` or
 
 ``` lua
 function Emph (em)
-  local nested = #em.content == 1 and em.content[1]
+  local nested = em.content[1]
   if nested and nested.t == 'Emph' then
     return pandoc.SmallCaps(nested.content)
   end
@@ -167,11 +175,11 @@ end
 In action
 
 ```
- % pandoc --to=latex <<< '_*Hello*_'
-=> \emph{\emph{Hello}}
+% echo '_*Hello*_' | pandoc --to=latex
+⇒ \emph{\emph{Hello}}
 
- % pandoc --lua-filter=smallcaps.lua --to=latex <<< '_*Hello*_'
-=> \textsc{Hello}
+% echo '_*Hello*_' | pandoc --to=latex --lua-filter=sc.lua
+⇒ \textsc{Hello}
 ```
 
 ## Language overview
@@ -207,7 +215,7 @@ C API
 
 ## Foreign Function Interface
 
-- Use programs written in a different language
+- Connects programs written in different languages
 - Must support the relevant types
 - Builds bridges from the runtime system.
 
@@ -316,13 +324,36 @@ The `run` function just opens and closes a Lua state.
 :::
 
 
-# Data exchange
+# Data
 
 ## Stack
 
 ```
-       <----???--- Just (23 % 5) ::
-,----------.       Maybe (Ratio Int)
+        ,----------.
+        |  arg 3   |
+        +----------+
+        |  arg 2   |
+        +----------+
+        |  arg 1   |
+        +----------+                  ,----------.
+        | function |    call 3 1      | result 1 |
+        +----------+   ===========>   +----------+
+        |          |                  |          |
+        |  stack   |                  |  stack   |
+        |          |                  |          |
+```
+
+::: notes
+Function calls work by pushing a function and its arguments to the
+stack. The function is then called with the given number of arguments,
+and the results are pushed back to the stack.
+:::
+
+## Marshal
+
+```
+       <----???--- Emph [Str "a"] :: Inline
+,----------.
 |     5    |
 +----------+
 |   true   |
@@ -332,14 +363,75 @@ The `run` function just opens and closes a Lua state.
 
 ::: notes
 The C API makes it easy to deal with simple values like numbers,
-booleans, and strings. However, how would be put a Haskell value on the
+booleans, and strings. However, how would we put a Haskell value on the
 stack?
+:::
+
+## Lua tables
+
+``` haskell
+pushInline x = do
+  newtable
+  case x of
+    Str txt -> pushText txt *> setfield (nth 2) "text"
+    Emph xs -> pushList pushInline xs *>
+               setfield (nth 2) "content"
+    -- ...
+```
+
+`Str "a"` becomes
+
+``` lua
+x = {text = 'a'}
+print(x.text) -- prints: a
+```
+
+## Metatables
+
+Metatables define object behavior.
+
+``` lua
+local mt = {
+  __add   = function (a, b) return {a, b} end,
+  __index = function (t, k) return 42 end,
+  __gc    = function () print('collected') end,
+}
+
+local x = setmetatable({1}, mt)
+local nope  = {1} + 1 -- ⇒ ERROR!
+local tuple = x + 2   -- tuple == {x, 2}
+print(x[1], x.hello)  -- prints: 1, 42
+```
+
+::: notes
+Metatables control how an object is used with operators, how it is
+printed, iterated, and indexed.
+
+This also allows for object-oriented programming; metatables can be
+treated as defining "classes".
+
+Similar to special methods in Python.
+:::
+
+## Table values
+
+- Straight-forward
+- Simple
+- Strict
+
+::: notes
+
+Tables are Lua's primary data structure, using them is very natural.
+This is what we used for the initial version of pandoc Lua filters.
+
+However, it also requires strict evaluation, which is not what we want
+when dealing with large (possibly infinite) objects.
 :::
 
 ## Userdata
 
 - Wrapper for arbitrary data.
-- Behavior in Lua can be mended freely.
+- Metatables define behavior.
 - Frequently used with pointers.
 - But pointers don't work well with GC.
 
@@ -380,44 +472,107 @@ freeStablePtr xptr
   -- ??? freeStablePtr ???
 ```
 
-## Define behavior in Haskell
+::: notes
+Line-by-line
+
+- create a new (stable) pointer
+- create a new userdata object on the stack that can fit a stable
+  pointer.
+- Store the stable pointer in the userdata.
+- When do we free it?
+
+Types of the invoked functions:
+
+- `newStablePtr    :: a -> IO (StablePtr a)`
+- `lua_newuserdata :: State -> CSize -> IO (Ptr ())`
+- `poke            :: Storable a => Ptr a -> a -> IO ()`
+:::
+
+## Free pointer
+
+Set `__gc` metamethod on userdata.
 
 ``` c
+#include <HsFFI.h>
+
+static int hslua_userdata_gc(lua_State *L) {
   HsStablePtr *userdata = lua_touserdata(L, 1);
-  if (userdata) {
+  if (userdata)
     hs_free_stable_ptr(*userdata);
-  }
+  return 0;
+}
 ```
 
+::: notes
+Userdata values are freed via a C function (for performance).
+`HsFFI.h` defines the types required for that.
+
+- `void	*(lua_touserdata) (lua_State *L, int idx);`
+- `void hs_free_stable_ptr (HsStablePtr)`
+:::
+
 # In action
+
+::: notes
+
+We've seen that Haskell brings all the features necessary to work with Lua.
+This may all sound neat, but you may be asking "how am I supposed to use
+that?"
+
+The goal is to give pandoc contributors access to the Lua subsystem's
+workings with relative ease.
+
+:::
 
 ## Types
 
 ``` haskell
-typeRational = deftype "Rational"
-  [ operation Tostring $ lambda
-      ### liftPure show
-      <#> parameter (peekUD typeRational) "rational" "r"
-      =#> functionResult pushString "string" "string representation"
+-- | A table row.
+data Row = Row Attr [Cell]
+
+typeRow = deftype "Row" []
+  [ property "cells" "row cells"
+      (pushList pushCell, \(Row _ cells) -> cells)
+      (peekList peekCell, \(Row attr _) cells ->
+                             Row attr cells)
   ]
-  [ property "numerator" "numerator of the ratio in reduced form"
-      (pushIntegral, numerator)
-      (peekIntegral, \r n -> n % denominator r)
-  ]
+```
+
+``` lua
+-- print first cell in row
+print(row.cells[1])
 ```
 
 ## Functions
 
 ``` haskell
-registerRational = do
-  pushDocumentedFunction $
-   defun "Rational"
-      ### liftPure2 (%)
-      <*> parameter peekIntegral "integer" "numerator"
-      <*> parameter peekIntegral "integer" "denominator"
-      =#> functionResult (pushUD typeRational)
-  setglobal "Rational"
+mkRow = defun "Row"
+  ### liftPure2 Row -- lift a pure Haskell function to Lua
+  <#> udparam typeAttr "attr" "cell attributes"
+  <#> parameter (peekList peekCell) "{Cell,...}"
+        "cells" "row cells"
+  =#> udResult typeRow "new Row object"
+
+registerDocumentedFunction mkRow
 ```
+
+In Lua:
+
+``` lua
+empty_row = Row(Attr(), {})
+```
+
+::: notes
+Function `liftPure2` is defined as
+
+``` haskell
+liftPure2 :: (a -> b -> c)
+          -> (a -> b -> LuaE e c)
+liftPure2 f !a !b = return $! f a b
+```
+
+We don't want lazy IO, hence the extra strictness.
+:::
 
 ## Tests
 
@@ -457,8 +612,27 @@ Tasty is a popular Haskell testing framework. Lua tests can be
 integrated into a Tasty test-suite.
 :::
 
+## Property tests
+``` lua
+    test('property test with integers',
+      forall(
+        arbitrary.integer,
+        function (i)
+          return type(i) == 'number' and math.floor(i) == i
+        end
+      )
+    ),
+```
 
-## 🧑‍💼🏢🧑‍💻
+# 🧑‍💻🏢🧑‍💼
+
+## pandoc
+
+![Pandoc-related projects written in Lua on
+GitHub](images/pandoc-lua-on-github.png)
+
+
+## Quarto
 
 RStudio
 
@@ -470,12 +644,31 @@ product, R Markdown, and base it on pandoc's Lua interface.
 
 # Thanks
 
-## Summary
+## End
+
+HsLua
+:   [hslua.org](https://hslua.org)
+
+Code
+:   [github.com/hslua/hslua](https://github.com/hslua/hslua)
+
+Languages
+:   [lua.org](https://lua.org), [haskell.org](https://haskell.org)
+
+pandoc Lua filters
+:   [pandoc.org/lua-filters](https://pandoc.org/lua-filters.html)
+
+Quarto
+:   [quarto.org](https://quarto.org)
+
+::: notes
 
 - Haskell and Lua are both excellent languages
 - Together they are even stronger
 - Integrating Lua into Haskell apps is easy
 - HsLua is a ready-to-use framework
+
+:::
 
 
 # Appendix
