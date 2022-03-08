@@ -28,17 +28,17 @@ subtitle: Come together over FFI
 ::::: column
 ### Haskell
 
-- lazy evaluation
 - static typing
 - compiled
+- lazy evaluation
 :::::
 
 ::::: column
 ### Lua
 
-- strict evaluation
 - dynamic typing
 - interpreted
+- strict evaluation
 :::::
 :::
 
@@ -269,6 +269,7 @@ and fine-grained. Conversions work well, types must just be instances of
 Basic bindings to Lua
 
 ``` haskell
+-- | Retrieve content of field \"age\" from the registry.
 getAge :: Lua.State -> IO Lua.Integer
 getAge l = do
   withCString "age" $
@@ -458,6 +459,14 @@ x' <- deRefStablePtr xptr
 freeStablePtr xptr
 ```
 
+::: notes
+Types of the invoked functions:
+
+- `newStablePtr    :: a -> IO (StablePtr a)`
+- `deRefStablePtr  :: StablePtr a -> IO a`
+- `freeStablePtr   :: StablePtr a -> IO ()`
+:::
+
 ## Pointers in userdata
 
 ```
@@ -632,9 +641,10 @@ integrated into a Tasty test-suite.
 GitHub](images/pandoc-lua-on-github.png)
 
 
-## Quarto
+## quarto
 
-RStudio
+![Scientific and technical publishing
+system](images/icon-quarto.svg){width="3em"}
 
 ::: notes
 RStudio is a large, successful software company. They are rebuilding a popular
@@ -642,9 +652,9 @@ product, R Markdown, and base it on pandoc's Lua interface.
 :::
 
 
-# Thanks
+# End
 
-## End
+## Thanks
 
 HsLua
 :   [hslua.org](https://hslua.org)
